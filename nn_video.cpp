@@ -1,26 +1,43 @@
 #include <opencv2/opencv.hpp>
+#include <hailo/hailort.hpp>
+#include <hailo/hef.hpp>
+
 #include <iostream>
-#include <string.h>
+#include <vector>
+#include <cstring>
+#include <stdexcept>
 
 int main(int argc, char* argv[]){
 
     // checking the arguments to see if I want to open a different neural network
     if (argc != 2){
-        std::cerr << "need two arguments, the object file and the path for the neural network," << std::endl;
+        std::cerr << "need two arguments, the object file and the path for the neural network" << std::endl;
     }
 
     std::string nn_path = argv[1];
     std::cout << "The second argument was: " << nn_path << std::endl;
 
     std::cout << "About to open the camera" << std::endl;
-    cv::VideoCapture cap ("/dev/video8", cv::CAP_V4L2);
+    cv::VideoCapture cap ("/dev/video0", cv::CAP_V4L2);
     
     if (!cap.isOpened()){
-        std::cerr << "There was an error attempting to open the camera" << std::endl;
+        std::cerr << "There was an error attempting to open the camera 😭" << std::endl;
         return 1;
     }
 
     std::cout << "The camera opened successfully" << std::endl;
+
+    std::cout << "about to create the hef" << std::endl;
+    auto hef_exp = hailort::Hef::create(nn_path);                   // 
+    if (!hef_exp){
+        std::cerr << "There was an error creating hef_exp" << std::endl;
+        return 1;
+    }
+
+    std::cout << "hef_exp was created successfully" << std::endl;
+
+    hailort::Hef hef = std::move(hef_exp.value());
+    
 
     // var declarations
     cv::Mat frame;

@@ -104,3 +104,8 @@
 [2026-02-03 16:48:42.516] [3998] [HailoRT] [info] [pipeline.cpp:891] [print_deep_description] LastAsyncEl6AsyncHwEl | inputs: AsyncHwEl[0] | outputs: user
 [2026-02-03 16:48:42.516] [3998] [HailoRT] [info] [pipeline.cpp:891] [print_deep_description] LastAsyncEl7AsyncHwEl | inputs: AsyncHwEl[0] | outputs: user
 [2026-02-03 16:48:42.516] [3998] [HailoRT] [info] [pipeline.cpp:891] [print_deep_description] LastAsyncEl8AsyncHwEl | inputs: AsyncHwEl[0] | outputs: user
+[2026-02-05 18:45:57.806] [16667] [HailoRT] [error] [file_utils.cpp:124] [open] CHECK failed - Failed opening file, path: /usr/share/hailo-models/yolov8s_pose.hef
+[2026-02-05 18:45:57.810] [16667] [HailoRT] [error] [hef.cpp:560] [parse_hef_file] CHECK_SUCCESS failed with status=HAILO_OPEN_FILE_FAILURE(13)
+[2026-02-05 18:45:57.810] [16667] [HailoRT] [error] [hef.cpp:1060] [Impl] Failed parsing HEF file
+[2026-02-05 18:45:57.810] [16667] [HailoRT] [error] [hef.cpp:333] [create] Failed creating HEF
+[2026-02-05 18:45:57.810] [16667] [HailoRT] [error] [hef.cpp:168] [create] CHECK_SUCCESS failed with status=HAILO_OPEN_FILE_FAILURE(13)
