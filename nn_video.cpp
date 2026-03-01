@@ -6,6 +6,37 @@
 #include <vector>
 #include <cstring>
 #include <stdexcept>
+#include "hailo_objects.hpp"
+#include "hailo_common.hpp"
+#include "pose_estimation/yolov8pose_postprocess.hpp"
+
+#include <cstdlib>  // for aligned_alloc / free
+
+constexpr size_t HAILO_ALIGNMENT = 16384;  // 16KB alignment required
+
+// HailoRT's DMA engine requires memory to be aligned to 16384-byte boundaries
+// when I tried to use regular std::vector the HW has to do extra copies -> degrading performance
+// this is copied from someone else's project I found on github
+struct AlignedBuffer {
+    void* ptr = nullptr;
+    size_t data_size = 0;    // actual data size the model expects
+    size_t alloc_size = 0;   // rounded-up size for aligned_alloc
+
+    AlignedBuffer(size_t sz) : data_size(sz) {
+        alloc_size = ((sz + HAILO_ALIGNMENT - 1) / HAILO_ALIGNMENT) * HAILO_ALIGNMENT;
+        ptr = aligned_alloc(HAILO_ALIGNMENT, alloc_size);
+        if (!ptr) throw std::bad_alloc();
+    }
+
+    ~AlignedBuffer() { free(ptr); }
+
+    AlignedBuffer(const AlignedBuffer&) = delete;
+    AlignedBuffer& operator=(const AlignedBuffer&) = delete;
+
+    uint8_t* data() { return static_cast<uint8_t*>(ptr); }
+};
+
+
 
 int main(int argc, char* argv[]){
 
@@ -15,34 +46,103 @@ int main(int argc, char* argv[]){
     }
 
     std::string nn_path = argv[1];
-    std::cout << "The second argument was: " << nn_path << std::endl;
+    // std::cout << "The second argument was: " << nn_path << std::endl;
 
-    std::cout << "About to open the camera" << std::endl;
+    // std::cout << "About to open the camera" << std::endl;
     cv::VideoCapture cap ("/dev/video0", cv::CAP_V4L2);
-    
+
+    // checking to make sure the capture was opened correctly
     if (!cap.isOpened()){
         std::cerr << "There was an error attempting to open the camera 😭" << std::endl;
         return 1;
     }
-
     std::cout << "The camera opened successfully" << std::endl;
 
-    std::cout << "about to create the hef" << std::endl;
-    auto hef_exp = hailort::Hef::create(nn_path);                   // 
+    // std::cout << "about to create the hef" << std::endl;
+    // checking to make sure the HEF (Hailo executable format) was created and 
+    auto hef_exp = hailort::Hef::create(nn_path);                   
     if (!hef_exp){
         std::cerr << "There was an error creating hef_exp" << std::endl;
         return 1;
     }
 
-    std::cout << "hef_exp was created successfully" << std::endl;
+    // std::cout << "hef_exp was created successfully" << std::endl;
 
+    // std::cout << "About to extract the HEF object" << std::endl;
     hailort::Hef hef = std::move(hef_exp.value());
-    
+    std::cout << "The HEF object was successfully creted" << std::endl;
+
+    // Create a VDevice (represents the physical Hailo chip)
+    auto vdevice_exp = hailort::VDevice::create();
+    if (!vdevice_exp){
+        std::cerr << "There was an error creating the device" << std::endl;
+        return 1;
+    }
+    auto vdevice = vdevice_exp.release();
+    std::cout << "The device was created successfully" << std::endl;    
+
+    // creating an inference model from the device
+    auto infer_model = vdevice->create_infer_model(nn_path).expect("Failed to create infer model");
+    auto configured_infer_model = infer_model->configure().expect("Failed to configure infer model");
+
+    //input/output stream info -> used to query the HEF to find out the tensor shapes without hardcoding them
+    auto input_streams_info = hef.get_input_vstream_infos();
+    auto& input_vstream_info = input_streams_info.value()[0];
+    if (!input_streams_info){
+        std::cerr << "There was an error trying to get the info from the vstream" << std::endl;
+        return 1;
+    }
+
+    // can get rid of, used for checking everything is alright
+    for (auto& info : input_streams_info.value()){
+        std::cout << "Info: " << info.name << " height:" << info.shape.height << " width:" << info.shape.width << " c:" << info.shape.features << std::endl;
+    }
+
+    // need to come back to figure what this is used for
+    int net_h = input_streams_info.value()[0].shape.height;
+    int net_w = input_streams_info.value()[0].shape.width;
+
+    auto output_stream_info = hef.get_output_vstream_infos();
+    auto& output_vstream = output_stream_info.value()[0];
+    if (!output_stream_info){
+        std::cerr << "There was an error getting the output vstream info" << std::endl;
+        return 1;
+    }
+
+    for (auto& info : output_stream_info.value()) {
+        std::cout << "Output: " << info.name 
+                << " height:" << info.shape.height 
+                << " width:" << info.shape.width 
+                << " features:" << info.shape.features
+                << " format:" << (int)info.format.type
+                << std::endl;
+    }
+
+    int output_size = output_stream_info.value()[0].shape.height * output_stream_info.value()[0].shape.width * output_stream_info.value()[0].shape.features;
+    std::vector<uint8_t> output_data(output_size);
+    // std::cout << "The output size for hef is " << output_size << std::endl;
 
     // var declarations
     cv::Mat frame;
-    int flag = 1;
+    volatile int flag = 1;
     int lost_frames = 0;
+
+    // // device info
+    // std::cout << "Input stream name: '" << input_vstream_info.name << "'" << std::endl;
+    // std::cout << "Output stream name: '" << output_vstream.name << "'" << std::endl;
+
+    // pre-loop buffer allocation -> if done in the loop, would be more expensive, so I moved it out
+    size_t input_size = net_h * net_w * 3;
+    AlignedBuffer input_buf(input_size);
+    std::map<std::string, AlignedBuffer> output_buffers;
+    for (auto& info : output_stream_info.value()) {
+        size_t sz = info.shape.height * info.shape.width * info.shape.features;
+        output_buffers.emplace(info.name, sz);
+    }
+
+    // declarations for the prev points and checking to see if it is the first frame
+    static std::vector<HailoPoint> prev_points;
+    static bool first_frame = true;
 
     // continuous loop for the camera
     while (flag){
@@ -54,7 +154,163 @@ int main(int argc, char* argv[]){
             continue;
         }
 
-        // std::cout << "Showing the image" << std::endl;
+        // creating a matrix to get the color
+        cv::Mat resized, rgb;
+        cv::resize(frame, resized, cv::Size(net_w, net_h));
+        cv::cvtColor(resized, rgb, cv::COLOR_BGR2RGB);
+
+
+        // creating an input buffer for an inference call
+        auto bindings = configured_infer_model.create_bindings().expect("Failed to create bindings");
+        std::string input_name = input_vstream_info.name;
+                
+        // Inside the loop, copy frame data into it:
+        std::memcpy(input_buf.data(), rgb.data, input_buf.data_size);
+        bindings.input(input_name)->set_buffer(hailort::MemoryView(input_buf.data(), (size_t)input_buf.data_size));
+
+        // Inside the loop (Bind all output buffers):
+        for (auto& [name, buf] : output_buffers) {
+            auto output_vstream = bindings.output(name);
+            output_vstream->set_buffer(hailort::MemoryView(buf.data(), buf.data_size));
+        }
+
+        // submitting the job to the Hailo chip
+        std::cout << "Running inference..." << std::endl;
+        auto job = configured_infer_model.run_async(bindings).expect("Failed to run inference");
+
+        // blocks until the chip finishes (with a 1 sec timeout)
+        std::cout << "Waiting for job..." << std::endl;
+        job.wait(std::chrono::milliseconds(1000));          // can change later if needed
+
+        // Build region of interest (ROI) covering the full frame
+        auto roi = std::make_shared<HailoROI>(HailoBBox(0.0f, 0.0f, 1.0f, 1.0f));
+
+        // Add each output tensor to the ROI
+        for (auto& info : output_stream_info.value()) {
+            // auto& buf = output_buffers.at(info.name);
+            auto& buf = output_buffers.at(std::string(info.name));
+
+            // tells the postprocessor the shape, quantization parameters, and format of each tensor
+            hailo_tensor_metadata_t meta;
+            std::memcpy(meta.name, info.name, HAILO_MAX_STREAM_NAME_SIZE);
+            meta.name[HAILO_MAX_STREAM_NAME_SIZE - 1] = '\0';
+            
+            // shape
+            meta.shape.height = info.shape.height;
+            meta.shape.width = info.shape.width;
+            meta.shape.features = info.shape.features;
+            
+            // format
+            meta.format.type = HailoTensorFormatType::HAILO_FORMAT_TYPE_UINT8;
+            meta.format.is_nms = false;
+            
+            // quant info - get from the vstream info
+            meta.quant_info.qp_zp = info.quant_info.qp_zp;
+            meta.quant_info.qp_scale = info.quant_info.qp_scale;
+            meta.quant_info.limvals_min = info.quant_info.qp_zp;   
+            meta.quant_info.limvals_max = info.quant_info.qp_scale;
+
+            // raw output bytes in each buffer need to be wrapped in HailoTensor objects so the postprocessor can read them
+            auto tensor = std::make_shared<HailoTensor>(buf.data(), meta);
+            roi->add_tensor(tensor);
+        }
+
+        // Run the postprocessor - decodes boxes, keypoints, NMS
+        filter(roi);
+
+        // Draw results on frame
+        int frame_w = frame.cols;
+        int frame_h = frame.rows;
+
+
+        // loop for drawing and movement detection
+        for (auto& obj : roi->get_objects_typed(HAILO_DETECTION)) {
+            
+            // bbox -> bounded box
+            auto detection = std::dynamic_pointer_cast<HailoDetection>(obj);
+            auto bbox = detection->get_bbox();
+
+            // draw box
+            int x1 = bbox.xmin() * frame_w;
+            int y1 = bbox.ymin() * frame_h;
+            int x2 = bbox.xmax() * frame_w;
+            int y2 = bbox.ymax() * frame_h;
+            cv::rectangle(frame, cv::Point(x1,y1), cv::Point(x2,y2),cv::Scalar(255,0,255), 2);
+
+            // iterating over the landmarks 
+            for (auto& subobj : detection->get_objects_typed(HAILO_LANDMARKS)) {
+
+                auto landmarks = std::dynamic_pointer_cast<HailoLandmarks>(subobj);
+                const auto& points = landmarks->get_points();
+
+                // decided I only want the arm indices (5-10)
+                // the other indices were for eyes, hips -> decided it was too much work to get these if we are not using them
+                for (size_t k = 5; k <= 10; k++){
+                    if (k < points.size() && points[k].confidence() > 0.5f){
+                        int kx = points[k].x() * frame_w;
+                        int ky = points[k].y() * frame_h;
+                        cv::circle(frame, cv::Point(kx,ky), 6, cv::Scalar(0,255,0), -1);    // green dots
+                    }
+                }
+
+                // draw skeleton
+                std::vector<std::pair<int,int>> skeleton = {
+                    {5, 7}, {7, 9},   // left:  shoulder->elbow->wrist
+                    {6, 8}, {8, 10}   // right: shoulder->elbow->wrist
+                };
+
+                // iterating over the skeleton vector pairs - represnets keypoint indices to connect with a line
+                for (auto& [a,b] : skeleton){
+
+                    // bounds check
+                    if (a < (int)points.size() && b < (int)points.size()) {
+
+                        // if there is a high confidence (can change this later), draw the line
+                        if (points[a].confidence() > 0.5f && points[b].confidence() > 0.5f){
+                            cv::Point pa(points[a].x() * frame_w, points[a].y() * frame_h);
+                            cv::Point pb(points[b].x() * frame_w, points[b].y() * frame_h);
+                            cv::line(frame, pa, pb, cv::Scalar(255, 0, 255), 2);
+                        }
+                    }
+                }
+
+                // Movement detection for arm keypoints
+                std::vector<int> arm_indices = {5, 6, 7, 8, 9, 10};
+                std::vector<std::string> arm_names = {
+                    "left_shoulder", "right_shoulder",
+                    "left_elbow",    "right_elbow",
+                    "left_wrist",    "right_wrist"
+                };
+
+                // guard for unintialized peev_points on first fram and checking size
+                if (!first_frame && prev_points.size() == points.size()) {
+                    for (size_t i = 0; i < arm_indices.size(); i++) {
+                        size_t idx = arm_indices[i];
+                        if (idx >= points.size()) continue;
+
+                        // if there is a high confidence, get the change in pixels for arm movement
+                        if (points[idx].confidence() > 0.5f){
+                            float dx = (points[idx].x() - prev_points[idx].x()) * frame.cols;
+                            float dy = (points[idx].y() - prev_points[idx].y()) * frame.rows;
+                            float dist = std::sqrt(dx*dx + dy*dy);
+
+                            // Only print if movement exceeds threshold (can also change this later)
+                            if (dist > 5.0f) {
+                                std::string horiz = (dx > 0) ? "right" : "left";
+                                std::string vert  = (dy > 0) ? "down"  : "up";
+                                std::cout << arm_names[i] << " moved " << horiz << " by " << std::abs(dx) << "px, "
+                                        << vert  << " by " << std::abs(dy) << "px" << " (dist=" << dist << ")" << std::endl;
+                            }
+                        }
+                    }
+                }
+
+                prev_points = std::vector<HailoPoint>(points.begin(), points.end());
+                first_frame = false;
+            }
+        }
+
+        // displaying the image
         cv::imshow("NN Feed", frame);
 
         // getting the keyboard press and checking if we need to exit
@@ -65,9 +321,10 @@ int main(int argc, char* argv[]){
         }
     }
 
+    // NOTE: can change the way it is sending to send on a timer instead of always sending
+
     // cleanup
     cap.release();
     cv::destroyAllWindows();
     return 0;
 }
-

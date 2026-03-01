@@ -1,3 +1,22 @@
+// {
+//     "configurations": [
+//         {
+//             "name": "Linux",
+//             "includePath": [
+//                 "${workspaceFolder}/**",
+//                 "/usr/include/opencv4",
+//                 "/usr/include"
+//             ],
+//             "defines": [],
+//             "compilerPath": "/usr/bin/gcc",
+//             "cStandard": "c17",
+//             "cppStandard": "gnu++17",
+//             "intelliSenseMode": "linux-gcc-arm64"
+//         }
+//     ],
+//     "version": 4
+// }
+
 {
     "configurations": [
         {
@@ -5,7 +24,12 @@
             "includePath": [
                 "${workspaceFolder}/**",
                 "/usr/include/opencv4",
-                "/usr/include"
+                "/usr/include",
+                "/usr/include/hailo",
+                "/usr/include/hailo/tappas",
+                "/usr/include/hailo/tappas/pose_estimation",
+                "/usr/include/hailo/tappas/sources/xtensor/include",
+                "/usr/include/hailo/tappas/sources/xtl/include"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",
