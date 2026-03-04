@@ -41,15 +41,37 @@ struct AlignedBuffer {
 int main(int argc, char* argv[]){
 
     // checking the arguments to see if I want to open a different neural network
-    if (argc != 2){
-        std::cerr << "need two arguments, the object file and the path for the neural network" << std::endl;
+    if (argc != 3){
+	std::cerr << "Usage: " << argv[0] << " <path_to_hef> <camera_mode>\n";
+	std::cerr << "camera mode: 0 = USB webcam, 1 = RPi AI camera\n";
+	return 1;
     }
 
     std::string nn_path = argv[1];
+    int camera_mode = std::stoi(argv[2]);
     // std::cout << "The second argument was: " << nn_path << std::endl;
 
     // std::cout << "About to open the camera" << std::endl;
-    cv::VideoCapture cap ("/dev/video0", cv::CAP_V4L2);
+    cv::VideoCapture cap;
+
+    if (camera_mode == 0){
+	    std::cout << "Opening USB camera (/dev/video0)\n";
+	    cap.open(0, cv::CAP_V4L2);
+    } else if (camera_mode == 1) {
+	    std::cout << "Opening RPi AI camera via libcamera\n";
+	    std::string pipeline = "libcamerasrc "
+		    "! video/x-raw,format=NV12,width=2028,height=1520,framerate=30/1 "
+		    "! videoconvert "
+		    "! videoscale "
+		    "! video/x-raw,width=640,height=640 "
+    		    "! videoconvert "
+    		    "! video/x-raw,format=BGR "
+   		     "! appsink drop=true max-buffers=1 sync=false";
+	    cap.open(pipeline, cv::CAP_GSTREAMER);
+    } else {
+	    std::cerr << "Invalid camera_mode. Use 0 (USB) or 1 (RPi AI).\n";
+            return 1;
+    }
 
     // checking to make sure the capture was opened correctly
     if (!cap.isOpened()){
