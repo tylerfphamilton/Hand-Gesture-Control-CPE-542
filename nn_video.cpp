@@ -59,14 +59,16 @@ int main(int argc, char* argv[]){
 	    cap.open(0, cv::CAP_V4L2);
     } else if (camera_mode == 1) {
 	    std::cout << "Opening RPi AI camera via libcamera\n";
-	    std::string pipeline = "libcamerasrc "
-		    "! video/x-raw,format=NV12,width=2028,height=1520,framerate=30/1 "
-		    "! videoconvert "
-		    "! videoscale "
-		    "! video/x-raw,width=640,height=640 "
-    		    "! videoconvert "
-    		    "! video/x-raw,format=BGR "
-   		     "! appsink drop=true max-buffers=1 sync=false";
+	    std::string pipeline =
+    		"libcamerasrc "
+    		"! video/x-raw,format=NV12,width=1280,height=720,framerate=30/1 "
+    		"! queue leaky=downstream max-size-buffers=1 "
+    		"! videoconvert "
+    		"! videoscale "
+    		"! video/x-raw,width=640,height=640 "
+    		"! videoconvert "
+    		"! video/x-raw,format=BGR "
+    		"! appsink drop=true max-buffers=1 sync=false";
 	    cap.open(pipeline, cv::CAP_GSTREAMER);
     } else {
 	    std::cerr << "Invalid camera_mode. Use 0 (USB) or 1 (RPi AI).\n";
@@ -197,12 +199,17 @@ int main(int argc, char* argv[]){
         }
 
         // submitting the job to the Hailo chip
-        std::cout << "Running inference..." << std::endl;
+        // std::cout << "Running inference..." << std::endl;
         auto job = configured_infer_model.run_async(bindings).expect("Failed to run inference");
 
         // blocks until the chip finishes (with a 1 sec timeout)
-        std::cout << "Waiting for job..." << std::endl;
+        // std::cout << "Waiting for job..." << std::endl;
         job.wait(std::chrono::milliseconds(1000));          // can change later if needed
+	//auto status = job.wait(std::chrono::milliseconds(80));
+	//if (status != hailort::HAILO_SUCCESS) {
+    		// skip this frame, don't stall the pipeline
+    	//	continue;
+	//}
 
         // Build region of interest (ROI) covering the full frame
         auto roi = std::make_shared<HailoROI>(HailoBBox(0.0f, 0.0f, 1.0f, 1.0f));
