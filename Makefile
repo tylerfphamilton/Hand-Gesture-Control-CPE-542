@@ -16,13 +16,13 @@ TAPPAS_LIBS := -L/usr/lib/aarch64-linux-gnu/hailo/tappas/post_processes \
 
 CXXFLAGS += $(TAPPAS_FLAGS)
 
-SRC := nn_video.cpp
+SRC := nn_video.cpp audio_player.cpp dsp.cpp
 BIN := nn_video
 
 all: $(BIN)
 
 $(BIN): $(SRC)
-	$(CXX) $(CXXFLAGS) $(OPENCV_CFLAGS) $< -o $@ $(OPENCV_LIBS) -lhailort $(TAPPAS_LIBS)
+	$(CXX) $(CXXFLAGS) $(OPENCV_CFLAGS) nn_video.cpp audio_player.cpp dsp.cpp -o $@ $(OPENCV_LIBS) -lhailort $(TAPPAS_LIBS) -lsndfile -lportaudio
 
 run: $(BIN)
 	./$(BIN)
