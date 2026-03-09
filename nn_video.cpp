@@ -180,10 +180,14 @@ int main(int argc, char* argv[]){
 
     GestureTimer gTimer;
 
-    float currentVolume  = 0.8f;
+    float currentVolumeDb = -6.0f;
     float currentLP      = 800.0f;   // low-pass cutoff  (treble control)
     float currentHP      = 200.0f;   // high-pass cutoff (bass control)
     bool  reverbActive   = false;
+
+    auto dbToLinear = [](float db) {
+        return std::pow(10.0f, db / 20.0f);
+    };
 
     // continuous loop for the camera
     while (flag){
@@ -328,15 +332,15 @@ int main(int argc, char* argv[]){
                 if (fire) {
                     switch (g) {
                         case Gesture::ARMS_UP:
-                            currentVolume = std::min(1.0f, currentVolume + 0.1f);
-                            player.setVolume(currentVolume);
-                            std::cout << "↑ Volume: " << currentVolume << "\n";
+                            currentVolumeDb = std::min(0.0f, currentVolumeDb + 3.0f);  // +3 dB per hold
+                            player.setVolume(dbToLinear(currentVolumeDb));
+                            std::cout << "↑ Volume: " << currentVolumeDb << " dB\n";
                             break;
 
                         case Gesture::ARMS_DOWN:
-                            currentVolume = std::max(0.0f, currentVolume - 0.1f);
-                            player.setVolume(currentVolume);
-                            std::cout << "↓ Volume: " << currentVolume << "\n";
+                            currentVolumeDb = std::max(-40.0f, currentVolumeDb - 3.0f); // -3 dB per hold
+                            player.setVolume(dbToLinear(currentVolumeDb));
+                            std::cout << "↓ Volume: " << currentVolumeDb << " dB\n";
                             break;
 
                         case Gesture::TREBLE_UP:

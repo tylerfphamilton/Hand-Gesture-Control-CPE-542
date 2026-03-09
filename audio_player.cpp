@@ -274,5 +274,10 @@ int AudioPlayer::audioCallback(const void* inputBuffer, void* outputBuffer, unsi
     size_t newPlayhead = playhead + framesPerBuffer * state->numChannels;
     state->playhead.store(newPlayhead);
 
-    return (newPlayhead >= state->samples.size()) ? paComplete : paContinue;
+    //return (newPlayhead >= state->samples.size()) ? paComplete : paContinue;
+    if (newPlayhead >= state->samples.size()) {
+        state->playhead.store(0);  // loop back to start
+        return paContinue;         // was paComplete
+    }
+    return paContinue;
 }

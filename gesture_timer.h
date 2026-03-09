@@ -1,32 +1,29 @@
-// gesture_timer.h
 #pragma once
 #include <chrono>
 #include "gesture_ctl.h"
 
 class GestureTimer {
 public:
-    // how long a gesture must be held before it fires
-    static constexpr int HOLD_MS = 500;
+    static constexpr int HOLD_MS   = 400;
+    static constexpr int REPEAT_MS = 200;
 
-    // call once per frame with the current gesture
-    // returns true on the frame the hold threshold is crossed
     bool update(Gesture g) {
         auto now = std::chrono::steady_clock::now();
 
         if (g != current) {
             current   = g;
             startTime = now;
-            fired     = false;
+            lastFire  = now;
             return false;
         }
+        if (g == Gesture::NONE) return false;
 
-        if (!fired && g != Gesture::NONE) {
-            int elapsed = std::chrono::duration_cast<std::chrono::milliseconds>
-                          (now - startTime).count();
-            if (elapsed >= HOLD_MS) {
-                fired = true;   // only fires once per hold
-                return true;
-            }
+        int elapsed       = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
+        int sinceLastFire = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFire).count();
+
+        if (elapsed >= HOLD_MS && sinceLastFire >= REPEAT_MS) {
+            lastFire = now;
+            return true;
         }
         return false;
     }
@@ -35,5 +32,6 @@ public:
 
 private:
     std::chrono::steady_clock::time_point startTime;
-    bool fired = false;
+    std::chrono::steady_clock::time_point lastFire;
+    // ← no fired bool here
 };
