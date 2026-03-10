@@ -23,13 +23,13 @@ struct AudioState {
     std::atomic<size_t> playhead{0}; // current position in samples[]
 
     // effect parameters - write from main(), read in callback
-    std::atomic<float> volume{1.0f};
+    std::atomic<float> volume{5.0f};
 
     std::atomic<bool>  lowPassEnabled{false};
-    std::atomic<float> lowPassCutoff{500.0f};
+    std::atomic<float> lowPassCutoff{200.0f};
 
     std::atomic<bool>  highPassEnabled{false};
-    std::atomic<float> highPassCutoff{2000.0f};
+    std::atomic<float> highPassCutoff{5000.0f};
 
     // filter instances - one per channel, state persists across callbacks
     BiquadFilter lowPassFilter[2];
