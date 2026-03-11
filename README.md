@@ -88,16 +88,18 @@ sudo apt install -y \
   gstreamer1.0-plugins-good \
   gstreamer1.0-plugins-bad \
   gstreamer1.0-plugins-ugly
-
+```
 ---
 ## How to Run
 
 ### Build
 
 Copy this repository
-Run make clean && make
+Run
+```bash
+make clean && make
 ./nn_video <path_to_hef> <camera_mode> <input_audio_file>
-
+```
 ### <path_to_hef>
 
 The HEFs (Hailo Executable File) get uploaded via hailo-modes install, and give you several options to use. We suggest using 
