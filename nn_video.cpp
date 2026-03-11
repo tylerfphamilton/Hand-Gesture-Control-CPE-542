@@ -9,6 +9,9 @@
 #include "hailo_objects.hpp"
 #include "hailo_common.hpp"
 #include "pose_estimation/yolov8pose_postprocess.hpp"
+#include "audio_player.h"
+#include "gesture_ctl.h"
+#include "gesture_timer.h"
 
 #include <cstdlib>  // for aligned_alloc / free
 
@@ -41,14 +44,15 @@ struct AlignedBuffer {
 int main(int argc, char* argv[]){
 
     // checking the arguments to see if I want to open a different neural network
-    if (argc != 3){
-	std::cerr << "Usage: " << argv[0] << " <path_to_hef> <camera_mode>\n";
+    if (argc != 4){
+	std::cerr << "Usage: " << argv[0] << " <path_to_hef> <camera_mode> <audio_file>\n";
 	std::cerr << "camera mode: 0 = USB webcam, 1 = RPi AI camera\n";
 	return 1;
     }
 
     std::string nn_path = argv[1];
     int camera_mode = std::stoi(argv[2]);
+    std::string audio_path = argv[3];
     // std::cout << "The second argument was: " << nn_path << std::endl;
 
     // std::cout << "About to open the camera" << std::endl;
@@ -127,7 +131,7 @@ int main(int argc, char* argv[]){
     int net_w = input_streams_info.value()[0].shape.width;
 
     auto output_stream_info = hef.get_output_vstream_infos();
-    auto& output_vstream = output_stream_info.value()[0];
+    //auto& output_vstream = output_stream_info.value()[0];
     if (!output_stream_info){
         std::cerr << "There was an error getting the output vstream info" << std::endl;
         return 1;
@@ -166,7 +170,24 @@ int main(int argc, char* argv[]){
 
     // declarations for the prev points and checking to see if it is the first frame
     static std::vector<HailoPoint> prev_points;
-    static bool first_frame = true;
+    //static bool first_frame = true;
+
+    // construct player and timer
+    AudioPlayer player;
+    player.loadFile(audio_path);
+    player.setVolume(0.8f);
+    player.play(-1);
+
+    GestureTimer gTimer;
+
+    float currentVolumeDb = -6.0f;
+    float currentLP      = 800.0f;   // low-pass cutoff  (treble control)
+    float currentHP      = 200.0f;   // high-pass cutoff (bass control)
+    bool  reverbActive   = false;
+
+    auto dbToLinear = [](float db) {
+        return std::pow(10.0f, db / 20.0f);
+    };
 
     // continuous loop for the camera
     while (flag){
@@ -304,38 +325,61 @@ int main(int argc, char* argv[]){
                 }
 
                 // Movement detection for arm keypoints
-                std::vector<int> arm_indices = {5, 6, 7, 8, 9, 10};
-                std::vector<std::string> arm_names = {
-                    "left_shoulder", "right_shoulder",
-                    "left_elbow",    "right_elbow",
-                    "left_wrist",    "right_wrist"
-                };
+                ArmKeypoints arms = extractArms(points, frame_w, frame_h);
+                Gesture      g    = classifyGesture(arms, frame_w, frame_h);
+                bool         fire = gTimer.update(g);
 
-                // guard for unintialized peev_points on first fram and checking size
-                if (!first_frame && prev_points.size() == points.size()) {
-                    for (size_t i = 0; i < arm_indices.size(); i++) {
-                        size_t idx = arm_indices[i];
-                        if (idx >= points.size()) continue;
+                if (fire) {
+                    switch (g) {
+                        case Gesture::ARMS_UP:
+                            currentVolumeDb = std::min(0.0f, currentVolumeDb + 3.0f);  // +3 dB per hold
+                            player.setVolume(dbToLinear(currentVolumeDb));
+                            std::cout << "↑ Volume: " << currentVolumeDb << " dB\n";
+                            break;
 
-                        // if there is a high confidence, get the change in pixels for arm movement
-                        if (points[idx].confidence() > 0.5f){
-                            float dx = (points[idx].x() - prev_points[idx].x()) * frame.cols;
-                            float dy = (points[idx].y() - prev_points[idx].y()) * frame.rows;
-                            float dist = std::sqrt(dx*dx + dy*dy);
+                        case Gesture::ARMS_DOWN:
+                            currentVolumeDb = std::max(-40.0f, currentVolumeDb - 3.0f); // -3 dB per hold
+                            player.setVolume(dbToLinear(currentVolumeDb));
+                            std::cout << "↓ Volume: " << currentVolumeDb << " dB\n";
+                            break;
 
-                            // Only print if movement exceeds threshold (can also change this later)
-                            if (dist > 5.0f) {
-                                std::string horiz = (dx > 0) ? "right" : "left";
-                                std::string vert  = (dy > 0) ? "down"  : "up";
-                                std::cout << arm_names[i] << " moved " << horiz << " by " << std::abs(dx) << "px, "
-                                        << vert  << " by " << std::abs(dy) << "px" << " (dist=" << dist << ")" << std::endl;
-                            }
-                        }
+                        case Gesture::TREBLE_UP:
+                            // raise low-pass cutoff = let more treble through
+                            currentLP = std::min(8000.0f, currentLP + 500.0f);
+                            player.setLowPass(true, currentLP);
+                            std::cout << "▲ Treble LP cutoff: " << currentLP << " Hz\n";
+                            break;
+
+                        case Gesture::BASS_UP:
+                            // lower high-pass cutoff = let more bass through
+                            currentHP = std::max(20.0f, currentHP - 50.0f);
+                            player.setHighPass(true, currentHP);
+                            std::cout << "▼ Bass HP cutoff: " << currentHP << " Hz\n";
+                            break;
+
+                        case Gesture::REVERB_ON:
+                            reverbActive = !reverbActive;
+                            player.setReverb(reverbActive);
+                            std::cout << (reverbActive ? "🌊 Reverb ON" : "Reverb OFF") << "\n";
+                            break;
+
+                        default: break;
                     }
                 }
 
+            // draw gesture label on frame for debugging
+            std::string label = "NONE";
+            if (g == Gesture::ARMS_UP)    label = "ARMS UP";
+            if (g == Gesture::ARMS_DOWN)  label = "ARMS DOWN";
+            if (g == Gesture::TREBLE_UP)  label = "TREBLE";
+            if (g == Gesture::BASS_UP)    label = "BASS";
+            if (g == Gesture::REVERB_ON)  label = "REVERB";
+            cv::putText(frame, label, cv::Point(20, 40),
+            cv::FONT_HERSHEY_SIMPLEX, 1.2, cv::Scalar(0,255,255), 2);
+                
+
                 prev_points = std::vector<HailoPoint>(points.begin(), points.end());
-                first_frame = false;
+                //first_frame = false;
             }
         }
 
