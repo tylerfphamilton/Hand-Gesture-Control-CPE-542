@@ -1,7 +1,9 @@
 # Dance DJ Deck
+
 This project turns your body into a DJ controller. You can raise both arms to crank up the volume, hold out a T-pose to toggle reverb, and flex at 90 degrees to boost bass or treble. All in real time.
 The system works by running a YOLOv8 pose estimation neural network on a Hailo AI accelerator attached to a Raspberry Pi 5. The pose model continuously tracks the positions of your shoulders, elbows, and wrists. A gesture recognition layer then interprets the geometry of your arms and maps those gestures to audio effects, which are applied live to a .wav file playing through PortAudio.
 This guide will walk you through everything: the hardware assembly, software installation, how the gesture and audio systems work under the hood, and how those two systems are wired together into a single C++ application. By the end, you'll have a working system and a solid understanding of how it all fits together.
+
 ---
 
 ## Gestures
@@ -27,8 +29,9 @@ MicroSD card (32GB+, with Raspberry Pi OS installed)
 Monitor, keyboard, and mouse
 Speaker or headphones (3.5mm jack, HDMI audio, or USB sound card)
 Power supply for Raspberry Pi 5 (USB-C, 5V/5A)
- 
-**Why Hailo?** Running YOLOv8 pose estimation on a CPU at real-time framerates (30fps) would overwhelm the Raspberry Pi 5's ARM cores. The Hailo-8 AI accelerator offloads the neural network inference entirely, leaving the CPU free to handle gesture logic and audio processing. Without it, you'd be limited to very low framerates, making gesture detection sluggish and unreliable.
+
+> **Why Hailo?** Running YOLOv8 pose estimation on a CPU at real-time framerates (30fps) would overwhelm the Raspberry Pi 5's ARM cores. The Hailo-8 AI accelerator offloads the neural network inference entirely, leaving the CPU free to handle gesture logic and audio processing. Without it, you'd be limited to very low framerates, making gesture detection sluggish and unreliable.
+
 ---
 ## Physical Assembly
 Assemble the hardware before you install any software. This ensures the OS can detect all peripherals on first boot.
